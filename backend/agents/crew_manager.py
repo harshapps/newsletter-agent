@@ -5,6 +5,8 @@ from typing import List, Dict, Any
 import asyncio
 import logging
 from datetime import datetime
+import json
+import re
 
 class CrewManager:
     def __init__(self):
@@ -72,69 +74,201 @@ class CrewManager:
             llm=self.llm
         )
     
-    async def generate_newsletter(self, email: str, topics: List[str], news_data: List[Dict]) -> Dict[str, Any]:
+    async def generate_newsletter(self, email: str, topics: List[str], news_data: List[Dict], sources_used=None, date_fetched=None) -> Dict[str, Any]:
         """Generate a personalized newsletter using the multi-agent crew"""
-        
         try:
-            # For now, let's use a simplified approach to avoid CrewAI parsing issues
-            # We'll generate a newsletter directly without using the crew
-            newsletter_content = self._generate_simple_newsletter(email, topics, news_data)
-            
-            # Add metadata
+            print(f"🤖 Starting newsletter generation process...")
+            print(f"📧 Email: {email}")
+            print(f"📋 Topics: {topics}")
+            print(f"📰 News items: {len(news_data)}")
+            print(f"🔍 Step 1: Analyzing news data...")
+            for i, news in enumerate(news_data[:3], 1):
+                print(f"   📄 Article {i}: {news.get('title', 'No title')[:50]}...")
+            print(f"✍️ Step 2: Generating newsletter content with LLM...")
+            newsletter_content = await self._generate_llm_newsletter(email, topics, news_data, sources_used, date_fetched)
+            print(f"📝 Step 3: Creating HTML version...")
             newsletter_content.update({
                 "email": email,
                 "topics": topics,
                 "generated_at": datetime.utcnow().isoformat(),
-                "news_count": len(news_data)
+                "news_count": len(news_data),
+                "sources_used": sources_used or [],
+                "date_fetched": date_fetched or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
             })
-            
+            print(f"✅ Newsletter generation completed successfully!")
+            print(f"📊 Final stats: {len(newsletter_content.get('content', '').split())} words, {len(news_data)} news items")
             return newsletter_content
-            
         except Exception as e:
+            print(f"❌ Error in newsletter generation: {str(e)}")
             logging.error(f"Error in newsletter generation: {str(e)}")
             logging.error(f"Error type: {type(e)}")
             logging.error(f"Error details: {e}")
-            
-            # Fallback to simple newsletter generation
-            return self._generate_fallback_newsletter(email, topics, news_data)
+            return self._generate_fallback_newsletter(email, topics, news_data, sources_used, date_fetched)
     
-    def _generate_simple_newsletter(self, email: str, topics: List[str], news_data: List[Dict]) -> Dict[str, Any]:
-        """Generate a simple newsletter without using CrewAI"""
-        subject = f"Your Daily News Summary - {', '.join(topics)}"
+    async def _generate_llm_newsletter(self, email: str, topics: List[str], news_data: List[Dict], sources_used=None, date_fetched=None) -> Dict[str, Any]:
+        """Use the LLM to compose a newsletter from news_data."""
+        if not news_data:
+            return self._generate_fallback_newsletter(email, topics, news_data, sources_used, date_fetched)
         
-        content = f"""
-Good morning!
+        prompt = f"""
+You are an expert newsletter writer. Create a personalized daily newsletter for a user interested in: {', '.join(topics)}
 
-Here's your personalized news summary for today covering: {', '.join(topics)}
+News sources used for this summary: {', '.join(sources_used or [])}
+
+IMPORTANT: Each news item below includes a [LINK: URL] format. When you write about these stories, you MUST use these exact URLs when you mention "read more", "check it out", or similar phrases. Do not create generic links or placeholder text.
+
+Here are today's top news stories:
 
 """
+        for i, news in enumerate(news_data, 1):
+            url = news.get('url', '')
+            url_text = f" [LINK: {url}]" if url else ""
+            prompt += f"{i}. {news.get('title', 'No title')}\n   {news.get('summary', 'No summary')}{url_text}\n   Source: {news.get('source', 'Unknown')}\n\n"
         
-        if news_data:
-            content += "📰 Top Stories:\n\n"
-            for i, news in enumerate(news_data[:8], 1):  # Limit to 8 news items
-                title = news.get('title', 'No title')
-                summary = news.get('summary', 'No summary available')
-                source = news.get('source', 'Unknown')
-                
-                content += f"{i}. {title}\n"
-                content += f"   {summary[:200]}...\n"
-                content += f"   Source: {source}\n\n"
-        else:
-            content += "No news articles found for your topics today.\n\n"
-        
-        content += """
-Stay informed and have a great day!
+        prompt += f"""
+Write a friendly, engaging newsletter that:
+1. Starts with a warm greeting
+2. Summarizes the most important news stories in a clear, engaging way
+3. Highlights key insights and trends
+4. Mentions the sources used in the introduction
+5. IMPORTANT: When you mention "read more", "check it out", or similar phrases, you MUST include the actual URL that was provided in the news data above. Do not use generic phrases like "you can check it out here" without the URL.
+6. Ends with an encouraging closing message
+7. Do NOT include "[Your Name]" or any placeholder text - just end naturally
 
-Best regards,
-Your AI Newsletter Agent (Powered by MCP)
-        """
+Make it conversational and informative. Don't use JSON formatting - just write the newsletter content directly.
+
+The newsletter should be about 300-500 words and cover the most relevant stories for someone interested in {', '.join(topics)}.
+
+Remember: Always include the actual URLs when referencing "read more" or similar phrases.
+"""
+        try:
+            response = await asyncio.get_event_loop().run_in_executor(None, lambda: self.llm.invoke(prompt))
+            response_str = str(response)
+            
+            print(f"🔍 Raw LLM response: {response_str[:200]}...")
+            
+            # Try to parse the response
+            try:
+                # Clean the raw LLM response
+                content = self._clean_llm_response(response_str)
+
+                # Remove any placeholder text like "[Your Name]"
+                content = re.sub(r'\[Your Name\]', '', content, flags=re.IGNORECASE)
+                content = re.sub(r'\[.*?Name.*?\]', '', content, flags=re.IGNORECASE)
+                content = re.sub(r'\[.*?\]', '', content)  # Remove any remaining brackets
+                
+                # Clean up extra whitespace
+                content = re.sub(r'\n\s*\n\s*\n', '\n\n', content)  # Remove excessive line breaks
+                content = content.strip()
+
+                # Generate a subject based on topics
+                subject = f"Your Daily {', '.join(topics).title()} News Summary"
+                
+                print(f"✅ Successfully generated newsletter content")
+                print(f"📝 Content preview: {content[:100]}...")
+                
+            except Exception as e:
+                print(f"❌ Content processing failed: {e}")
+                print(f"🔍 Using fallback newsletter")
+                return self._generate_fallback_newsletter(email, topics, news_data, sources_used, date_fetched)
+            
+            return {
+                "subject": subject,
+                "content": content,
+                "html_content": self._convert_to_html(content),
+                "generation_method": "llm_ai",
+                "sources_used": sources_used or [],
+                "date_fetched": date_fetched or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+        except Exception as e:
+            print(f"❌ Error in LLM newsletter generation: {str(e)}")
+            return self._generate_fallback_newsletter(email, topics, news_data, sources_used, date_fetched)
+    
+    def _clean_llm_response(self, response_str: str) -> str:
+        """Clean the LLM response to extract proper content"""
+        # Remove any metadata or wrapper text
+        if "content='" in response_str:
+            start = response_str.find("content='") + 9
+            end = response_str.find("'", start)
+            if end > start:
+                response_str = response_str[start:end]
+        elif 'content="' in response_str:
+            start = response_str.find('content="') + 9
+            end = response_str.find('"', start)
+            if end > start:
+                response_str = response_str[start:end]
         
-        return {
-            "subject": subject,
-            "content": content.strip(),
-            "html_content": self._convert_to_html(content.strip()),
-            "generation_method": "simple_ai"
-        }
+        # Remove any leading/trailing whitespace and quotes
+        response_str = response_str.strip().strip('"\'')
+        
+        # Fix common formatting issues with robust error handling
+        try:
+            response_str = re.sub(r'\\n', '\n', response_str)
+            response_str = re.sub(r'\\"', '"', response_str)
+            response_str = re.sub(r'\\t', '\t', response_str)
+            response_str = re.sub(r'\\\\', '\\', response_str)
+            response_str = re.sub(r"\\'", "'", response_str)  # Fix escaped single quotes
+            # Remove any markdown code blocks
+            response_str = re.sub(r'```json\s*', '', response_str)
+            response_str = re.sub(r'```\s*$', '', response_str)
+            # Remove any remaining response metadata
+            response_str = re.sub(r'response_metadata=.*$', '', response_str, flags=re.DOTALL)
+            response_str = re.sub(r'id=\'.*$', '', response_str, flags=re.DOTALL)
+        except re.error as e:
+            logging.error(f"Regex error in _clean_llm_response: {e}")
+            return response_str.strip()
+        
+        return response_str.strip()
+    
+    def _extract_json_content(self, response_str: str) -> tuple:
+        """Extract subject and content from JSON response, handling nested JSON"""
+        try:
+            # First, try to parse the outer JSON
+            result = json.loads(response_str)
+            subject = result.get("subject", "Your Daily News Summary")
+            content = result.get("content", "")
+            
+            # Check if content is itself a JSON string
+            if isinstance(content, str) and content.strip().startswith("{"):
+                try:
+                    inner_result = json.loads(content)
+                    # Use inner subject if available, otherwise keep outer
+                    subject = inner_result.get("subject", subject)
+                    content = inner_result.get("content", content)
+                except json.JSONDecodeError:
+                    # If inner JSON fails, keep the content as is
+                    pass
+            
+            return subject, content
+            
+        except json.JSONDecodeError:
+            # Try to extract JSON using regex
+            json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_str, re.DOTALL)
+            
+            if json_match:
+                try:
+                    extracted_json = json_match.group(0)
+                    result = json.loads(extracted_json)
+                    subject = result.get("subject", "Your Daily News Summary")
+                    content = result.get("content", "")
+                    
+                    # Check for nested JSON in content
+                    if isinstance(content, str) and content.strip().startswith("{"):
+                        try:
+                            inner_result = json.loads(content)
+                            subject = inner_result.get("subject", subject)
+                            content = inner_result.get("content", content)
+                        except json.JSONDecodeError:
+                            pass
+                    
+                    return subject, content
+                    
+                except json.JSONDecodeError:
+                    pass
+            
+            # If all JSON parsing fails, return the raw response
+            return "Your Daily News Summary", response_str
     
     def _parse_crew_result(self, result) -> Dict[str, Any]:
         """Parse the crew result to extract newsletter components"""
@@ -187,8 +321,6 @@ Your AI Newsletter Agent (Powered by MCP)
     
     def _clean_content(self, content: str) -> str:
         """Clean content by removing CSS, HTML tags, and other artifacts"""
-        import re
-        
         # Remove CSS blocks
         content = re.sub(r'<style[^>]*>.*?</style>', '', content, flags=re.DOTALL | re.IGNORECASE)
         
@@ -229,50 +361,94 @@ Your AI Newsletter Agent (Powered by MCP)
     
     def _convert_to_html(self, content: str) -> str:
         """Convert plain text content to HTML format"""
-        html_template = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Daily Newsletter</title>
-        </head>
-        <body>
-            {content}
-            <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666;">
-                <p>Generated by Newsletter Agent MCP - AI-powered news curation with MCP tools</p>
-            </div>
-        </body>
-        </html>
+        html_content = content
+
+        # 1. Convert URLs to clickable links - handle "Read more:" format first
+        html_content = re.sub(
+            r'Read more: (https?://[^\s\)\]\>\<\*]+)',
+            r'<a href="\1" target="_blank" style="color: #0066cc; text-decoration: underline;">Read more</a>',
+            html_content
+        )
+        # 2. Handle the new [LINK: URL] format
+        html_content = re.sub(
+            r'\[LINK: (https?://[^\s\]\>\<\*]+)\]',
+            r'<a href="\1" target="_blank" style="color: #0066cc; text-decoration: underline;">Read more</a>',
+            html_content
+        )
+        # 3. Then convert any remaining standalone URLs (but not already converted ones)
+        html_content = re.sub(
+            r'(?<!href=")(https?://[^\s\)\]\>\<\*]+)(?!")',
+            r'<a href="\1" target="_blank" style="color: #0066cc; text-decoration: underline;">\1</a>',
+            html_content
+        )
+        # 4. Convert bold text (**text** to <strong>text</strong>)
+        html_content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html_content)
+        # 5. Convert italic text (*text* to <em>text</em>)
+        html_content = re.sub(r'\*(.*?)\*', r'<em>\1</em>', html_content)
+        # 6. Convert line breaks to HTML
+        html_content = html_content.replace('\n', '<br>')
+        # 7. Remove any accidental HTML tags inside links
+        html_content = re.sub(r'(</?(em|strong)>)((https?://[^\s\)\]\>\<]+))', r'\3', html_content)
+        # Simple HTML wrapper without extra styling
+        html_template = f"""
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            {html_content}
+        </div>
         """
-        
-        formatted_content = content.replace('\n', '<br>')
-        return html_template.format(content=formatted_content)
+        return html_template
     
-    def _generate_fallback_newsletter(self, email: str, topics: List[str], news_data: List[Dict]) -> Dict[str, Any]:
+    def _generate_fallback_newsletter(self, email: str, topics: List[str], news_data: List[Dict], sources_used=None, date_fetched=None) -> Dict[str, Any]:
         """Generate a simple newsletter as fallback"""
         subject = f"Your Daily News Summary - {', '.join(topics)}"
         
+        # Create a proper greeting
+        greeting = f"Good morning{f', {email.split('@')[0] if '@' in email else ''}' if email else ''}! 🌅"
+        
         content = f"""
-        Good morning!
+{greeting}
 
-        Here's your personalized news summary for today covering: {', '.join(topics)}
+I hope this email finds you well and ready for an exciting update on your favorite topics: {', '.join(topics)}!
 
-        """
+Here's your personalized news summary for today:
+
+"""
         
-        for i, news in enumerate(news_data[:10], 1):  # Limit to 10 news items
-            content += f"""
-        {i}. {news.get('title', 'No title')}
-           {news.get('summary', 'No summary available')}
-           Source: {news.get('source', 'Unknown')}
+        if news_data:
+            content += f"📰 **Top Stories ({len(news_data)} articles):**\n\n"
             
-        """
+            for i, news in enumerate(news_data[:8], 1):  # Limit to 8 news items
+                title = news.get('title', 'No title available')
+                summary = news.get('summary', 'No summary available')
+                source = news.get('source', 'Unknown source')
+                url = news.get('url', '')
+                
+                # Clean up the summary
+                if len(summary) > 200:
+                    summary = summary[:200] + "..."
+                
+                content += f"**{i}. {title}**\n"
+                content += f"{summary}\n"
+                if url:
+                    content += f"*Source: {source} | Read more: {url}*\n\n"
+                else:
+                    content += f"*Source: {source}*\n\n"
+        else:
+            content += "📰 **Today's News:**\n\n"
+            content += "We're currently gathering the latest news for your selected topics. "
+            content += "Please check back later for updates, or try refreshing the page.\n\n"
         
-        content += """
-        Stay informed and have a great day!
+        content += f"""
+📊 **Summary:**
+• Topics covered: {', '.join(topics)}
+• News articles: {len(news_data)}
+• Generated: {date_fetched or datetime.utcnow().strftime('%B %d, %Y at %I:%M %p UTC')}
+• Sources used: {', '.join(sources_used) if sources_used else 'N/A'}
 
-        Best regards,
-        Your AI Newsletter Agent (Powered by MCP)
+Stay informed and have a great day! 
+
+Best regards,
+Your AI Newsletter Agent 🤖
+(Powered by Multi-Agent AI and MCP Tools)
         """
         
         return {
@@ -283,7 +459,9 @@ Your AI Newsletter Agent (Powered by MCP)
             "topics": topics,
             "generated_at": datetime.utcnow().isoformat(),
             "news_count": len(news_data),
-            "mcp_tools_used": ["fallback_mode"]
+            "generation_method": "fallback_ai",
+            "sources_used": sources_used or [],
+            "date_fetched": date_fetched or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         }
     
     async def get_available_mcp_tools(self) -> List[Dict[str, str]]:

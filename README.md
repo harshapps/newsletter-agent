@@ -223,4 +223,144 @@ For support and questions:
 
 ---
 
-**Built with ❤️ using AI and Multi-Agent Systems** 
+**Built with ❤️ using AI and Multi-Agent Systems**
+
+## Google News Functionality
+
+The system now properly scrapes real news from Google News using the NewsAPI service, then uses an LLM to summarize the articles. This replaces the previous fake news generation.
+
+### How it works:
+1. **Real Data Fetching**: Uses NewsAPI to get actual Google News articles
+2. **LLM Summarization**: Sends real article content to GPT-4 for intelligent summarization
+3. **Fallback Sources**: If Google News fails, falls back to RSS feeds
+4. **No Fake News**: Never generates fake content - only works with real news
+
+### Testing Google News
+
+Run the test script to verify Google News functionality:
+
+```bash
+python test_google_news.py
+```
+
+This will test both the news fetching and LLM summarization capabilities.
+
+## Project Structure
+
+```
+newsletter-agent-mcp/
+├── backend/
+│   ├── agents/
+│   │   └── crew_manager.py
+│   ├── database/
+│   │   └── mongodb.py
+│   ├── main.py
+│   ├── mcp/
+│   │   └── tools.py
+│   └── services/
+│       ├── email_service.py
+│       └── news_service.py
+├── frontend/
+│   └── app.py
+├── requirements.txt
+├── start_backend.py
+├── start_frontend.py
+└── test_google_news.py
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## License
+
+MIT License 
+
+## Features
+
+- **Multi-Agent AI System**: Uses CrewAI for intelligent news curation and content generation
+- **Model Context Protocol (MCP)**: Implements MCP tools for news fetching, stock data, trend analysis, and more
+- **Real News Sources**: Fetches real news from multiple free sources including Reddit, Hacker News, RSS feeds, and Yahoo Finance
+- **AI-Powered Summarization**: Uses LLM to summarize real news articles
+- **Personalized Newsletters**: Customized content based on user preferences
+- **Modern UI**: Streamlit frontend for easy user interaction
+- **Database Storage**: MongoDB for storing user preferences and newsletter history
+
+## Tech Stack
+
+- **Backend**: FastAPI, CrewAI, MongoDB
+- **Frontend**: Streamlit
+- **AI/ML**: OpenAI GPT-4, LangChain
+- **News Sources**: Reddit, Hacker News, RSS feeds, Yahoo Finance, NewsAPI (optional)
+- **Email**: SMTP with HTML templates
+- **Database**: MongoDB with Motor (async driver)
+
+## Setup
+
+### 1. Clone and Install Dependencies
+
+```bash
+git clone <repository-url>
+cd newsletter-agent-mcp
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### 2. Environment Variables
+
+Create a `.env` file in the root directory:
+
+```env
+# OpenAI API Key (required for LLM functionality)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# NewsAPI Key (optional - for additional news sources)
+NEWS_API_KEY=your_newsapi_key_here
+
+# MongoDB Connection (optional, defaults to localhost)
+MONGODB_URI=mongodb://localhost:27017
+
+# Email Configuration (optional, for sending newsletters)
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USER=your_email@gmail.com
+EMAIL_PASSWORD=your_app_password
+```
+
+### 3. API Keys Setup
+
+#### OpenAI API Key (Required)
+1. Go to [OpenAI Platform](https://platform.openai.com/)
+2. Create an account and get your API key
+3. Add it to your `.env` file
+
+#### NewsAPI Key (Optional)
+1. Go to [NewsAPI](https://newsapi.org/)
+2. Sign up for a free account (1000 requests/day)
+3. Get your API key
+4. Add it to your `.env` file
+5. **Note**: The system works perfectly without this key using free sources
+
+## News Sources
+
+The system now uses multiple **free** news sources:
+
+### 🆓 **Free Sources (No API Key Required):**
+- **Reddit**: r/news, r/technology, r/sports, r/business, r/science
+- **Hacker News**: Top stories from the tech community
+- **RSS Feeds**: BBC, Reuters, CNN, TechCrunch, ESPN, and more
+- **Yahoo Finance**: Stock market and financial news
+
+### 🔑 **Optional Sources (API Key Required):**
+- **NewsAPI**: Additional news aggregation (1000 free requests/day)
+
+### How it works:
+1. **Real Data Fetching**: Uses multiple free sources to get actual news articles
+2. **LLM Summarization**: Sends real article content to GPT-4 for intelligent summarization
+3. **Multiple Fallbacks**: If one source fails, others continue working
+4. **No Fake News**: Never generates fake content - only works with real news 

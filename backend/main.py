@@ -52,9 +52,17 @@ class NewsletterRequest(BaseModel):
     email: EmailStr
     topics: List[str]
 
+class NewsletterGenerationRequest(BaseModel):
+    topics: List[str]
+    email: Optional[EmailStr] = None
+    news_source: Optional[str] = "Auto"
+
 class MCPToolTestRequest(BaseModel):
     tool_name: str
     parameters: dict = {}
+
+class TestEmailRequest(BaseModel):
+    email: EmailStr
 
 @app.on_event("startup")
 async def startup_event():
@@ -125,14 +133,23 @@ async def generate_newsletter(request: NewsletterRequest, background_tasks: Back
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
+        # Get news from multiple sources
+        news_result = await news_service.get_news_for_topics(request.topics or user.get("topics", []))
+        news_data = news_result["news"]
+        sources_used = news_result["sources_used"]
+        date_fetched = news_result["date_fetched"]
+        
         # Generate newsletter in background
         background_tasks.add_task(
             generate_and_send_newsletter,
             request.email,
-            request.topics or user.get("topics", [])
+            request.topics or user.get("topics", []),
+            news_data,
+            sources_used,
+            date_fetched
         )
         
-        return {"message": "Newsletter generation started", "email": request.email}
+        return {"message": "Newsletter generation started", "email": request.email, "sources_used": sources_used, "date_fetched": date_fetched}
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Newsletter generation failed: {str(e)}")
@@ -152,15 +169,20 @@ async def test_newsletter_generation(request: NewsletterRequest):
         
         # Get news from multiple sources
         print("Fetching news data...")
-        news_data = await news_service.get_news_for_topics(request.topics or user.get("topics", []))
-        print(f"Fetched {len(news_data)} news items")
+        news_result = await news_service.get_news_for_topics(request.topics or user.get("topics", []))
+        news_data = news_result["news"]
+        sources_used = news_result["sources_used"]
+        date_fetched = news_result["date_fetched"]
+        print(f"Fetched {len(news_data)} news items from sources: {sources_used}")
         
         # Use CrewAI to generate newsletter content
         print("Generating newsletter content...")
         newsletter_content = await crew_manager.generate_newsletter(
             email=request.email,
             topics=request.topics or user.get("topics", []),
-            news_data=news_data
+            news_data=news_data,
+            sources_used=sources_used,
+            date_fetched=date_fetched
         )
         
         print("Newsletter generated successfully")
@@ -169,6 +191,62 @@ async def test_newsletter_generation(request: NewsletterRequest):
             "message": "Newsletter generated successfully",
             "email": request.email,
             "news_count": len(news_data),
+            "sources_used": sources_used,
+            "date_fetched": date_fetched,
+            "newsletter": newsletter_content
+        }
+    
+    except Exception as e:
+        import traceback
+        print(f"Error in newsletter generation: {str(e)}")
+        print(f"Error type: {type(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Newsletter generation failed: {str(e)}")
+
+@app.post("/generate-newsletter-content")
+async def generate_newsletter_content(request: NewsletterGenerationRequest):
+    """Generate newsletter content without requiring email registration"""
+    try:
+        print(f"Starting newsletter generation for topics: {request.topics}")
+        print(f"Using news source: {request.news_source}")
+        
+        # Get user data (optional - user doesn't need to be registered)
+        if request.email:
+            user = await db.get_user(str(request.email))
+            # Don't require user to exist - just use None if not found
+        else:
+            user = None
+        
+        # Get news from multiple sources
+        print("Fetching news data...")
+        news_result = await news_service.get_news_for_topics(
+            request.topics or (user.get("topics", []) if user else []),
+            preferred_source=request.news_source or "Auto"
+        )
+        news_data = news_result["news"]
+        sources_used = news_result["sources_used"]
+        date_fetched = news_result["date_fetched"]
+        print(f"Fetched {len(news_data)} news items from sources: {sources_used}")
+        
+        # Use CrewAI to generate newsletter content
+        print("Generating newsletter content...")
+        newsletter_content = await crew_manager.generate_newsletter(
+            email=request.email or "anonymous@example.com",
+            topics=request.topics,
+            news_data=news_data,
+            sources_used=sources_used,
+            date_fetched=date_fetched
+        )
+        
+        print("Newsletter generated successfully")
+        
+        return {
+            "message": "Newsletter generated successfully",
+            "topics": request.topics,
+            "news_source": request.news_source,
+            "news_count": len(news_data),
+            "sources_used": sources_used,
+            "date_fetched": date_fetched,
             "newsletter": newsletter_content
         }
     
@@ -293,22 +371,56 @@ async def send_newsletter(request: dict):
         logging.error(f"Error sending newsletter: {str(e)}")
         return {"error": f"Internal server error: {str(e)}"}
 
+@app.post("/test-email")
+async def test_email(request: TestEmailRequest):
+    """Test email configuration by sending a test email"""
+    try:
+        # Send a test email
+        success = await email_service.send_test_email(request.email)
+        
+        if success:
+            return {
+                "message": "Test email sent successfully", 
+                "email": request.email,
+                "status": "success"
+            }
+        else:
+            return {
+                "error": "Failed to send test email. Check your email configuration.",
+                "email": request.email,
+                "status": "failed"
+            }
+            
+    except Exception as e:
+        logging.error(f"Error sending test email: {str(e)}")
+        return {
+            "error": f"Test email failed: {str(e)}",
+            "email": request.email,
+            "status": "error"
+        }
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
-async def generate_and_send_newsletter(email: str, topics: List[str]):
+async def generate_and_send_newsletter(email: str, topics: List[str], news_data=None, sources_used=None, date_fetched=None):
     """Generate and send newsletter for a user"""
     try:
-        # Get news from multiple sources
-        news_data = await news_service.get_news_for_topics(topics)
+        # If not provided, fetch news
+        if news_data is None or sources_used is None or date_fetched is None:
+            news_result = await news_service.get_news_for_topics(topics)
+            news_data = news_result["news"]
+            sources_used = news_result["sources_used"]
+            date_fetched = news_result["date_fetched"]
         
         # Use CrewAI to generate newsletter content
         newsletter_content = await crew_manager.generate_newsletter(
             email=email,
             topics=topics,
-            news_data=news_data
+            news_data=news_data,
+            sources_used=sources_used,
+            date_fetched=date_fetched
         )
         
         # Send email
@@ -342,7 +454,10 @@ async def daily_newsletter_delivery():
             if user.get("is_active", False):
                 await generate_and_send_newsletter(
                     user["email"],
-                    user.get("topics", [])
+                    user.get("topics", []),
+                    user.get("news_data"),
+                    user.get("sources_used"),
+                    user.get("date_fetched")
                 )
         
         print(f"Daily newsletter delivery completed for {len(users)} users")

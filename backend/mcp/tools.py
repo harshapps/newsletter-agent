@@ -9,6 +9,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from dataclasses import dataclass
+from langchain_openai import ChatOpenAI
 
 # Simple MCP-like classes
 @dataclass
@@ -43,7 +44,7 @@ class NewsTool(Tool):
         """Execute the news fetching tool"""
         try:
             news_service = NewsService()
-            news_data = await news_service.get_news_for_topics(topics)
+            news_data, sources_used = await news_service.get_news_for_topics(topics)
             
             return ToolResult(
                 success=True,
@@ -295,3 +296,52 @@ class MCPToolRegistry:
 
 # Global tool registry instance
 tool_registry = MCPToolRegistry() 
+
+llm = ChatOpenAI(
+    model="gpt-4",
+    temperature=0.7,
+    api_key=os.getenv("OPENAI_API_KEY")
+)
+
+def llm_topic_news_fetcher(topic: str):
+    """Fetch real news for any topic using the news service and summarize with LLM."""
+    try:
+        # Import the news service
+        from backend.services.news_service import NewsService
+        import asyncio
+        
+        # Create news service instance
+        news_service = NewsService()
+        
+        # Get real news for the topic
+        news_data, sources_used = asyncio.run(news_service.get_news_for_topics([topic]))
+        
+        # If we got real news, return it
+        if news_data and len(news_data) > 0:
+            return [
+                {
+                    "title": article.get("title", ""),
+                    "summary": article.get("summary", ""),
+                    "source": article.get("source", "Unknown")
+                }
+                for article in news_data[:3]  # Return top 3 articles
+            ]
+        
+        # If no real news found, provide a helpful message
+        return [
+            {
+                "title": f"Unable to fetch news for {topic}",
+                "summary": f"We couldn't find recent news articles for '{topic}'. This could be due to network issues, service maintenance, or the topic being too specific. Please try again later or check your NewsAPI key setup.",
+                "source": "News Service"
+            }
+        ]
+        
+    except Exception as e:
+        logging.error(f"Error fetching news for topic '{topic}': {str(e)}")
+        return [
+            {
+                "title": f"Error fetching news for {topic}",
+                "summary": f"Unable to fetch news for '{topic}' due to a technical issue. Please check your API keys and network connection, then try again later.",
+                "source": "News Service"
+            }
+        ] 

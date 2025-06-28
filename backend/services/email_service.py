@@ -95,6 +95,9 @@ class EmailService:
                     color: #555;
                     margin-bottom: 10px;
                     line-height: 1.5;
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
+                    white-space: pre-wrap;
                 }
                 .news-source {
                     color: #7f8c8d;
@@ -156,6 +159,8 @@ class EmailService:
                     <p>Topics: {{ topics|join(', ') }}</p>
                     <p>News items: {{ news_count }}</p>
                     <p>Generated: {{ generated_at }}</p>
+                    <p>News fetched on: {{ date_fetched }}</p>
+                    <p>Sources used: {{ sources_used|join(', ') }}</p>
                 </div>
                 
                 <div class="news-section">
@@ -195,6 +200,8 @@ Good morning!
 Topics: {{ topics|join(', ') }}
 News items: {{ news_count }}
 Generated: {{ generated_at }}
+News fetched on: {{ date_fetched }}
+Sources used: {{ sources_used|join(', ') }}
 
 TOP STORIES:
 {% for item in news_items %}
@@ -215,17 +222,32 @@ Powered by AI and Multi-Agent Systems
         """Send newsletter email to user"""
         try:
             # Prepare email content
-            subject = newsletter_data.get("subject", "Your Daily News Summary")
+            subject_val = newsletter_data.get("subject")
+            if not subject_val:
+                subject_val = "Your Daily News Summary"
+            subject_val = str(subject_val)
             
             # Extract news items from the content
             news_items = self._extract_news_items(newsletter_data.get("content", ""))
             
             # Prepare template variables
+            generated_at_val = newsletter_data.get("generated_at")
+            if not generated_at_val:
+                generated_at_val = datetime.now().isoformat()
+            generated_at_val = str(generated_at_val)
+
+            date_fetched_val = newsletter_data.get("date_fetched")
+            if not date_fetched_val:
+                date_fetched_val = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            date_fetched_val = str(date_fetched_val)
+
             template_vars = {
-                "subject": subject,
+                "subject": subject_val,
                 "topics": newsletter_data.get("topics", []),
                 "news_count": newsletter_data.get("news_count", 0),
-                "generated_at": newsletter_data.get("generated_at", datetime.now().isoformat()),
+                "generated_at": generated_at_val,
+                "date_fetched": date_fetched_val,
+                "sources_used": newsletter_data.get("sources_used", []),
                 "news_items": news_items
             }
             
@@ -235,8 +257,8 @@ Powered by AI and Multi-Agent Systems
             
             # Create email message
             message = MIMEMultipart("alternative")
-            message["Subject"] = subject
-            message["From"] = self.from_email
+            message["Subject"] = subject_val
+            message["From"] = self.from_email or self.email_user or "newsletter@example.com"
             message["To"] = str(to_email)
             
             # Add text and HTML parts
@@ -274,6 +296,16 @@ Powered by AI and Multi-Agent Systems
             
             # For Gmail, we need to handle SSL properly
             if self.smtp_host == "smtp.gmail.com":
+                logging.info("Using Gmail SMTP configuration")
+                
+                # Check if using app password (Gmail app passwords are 16 characters)
+                if len(self.email_password) != 16:
+                    logging.error("Gmail requires an App Password (16 characters). Please:")
+                    logging.error("1. Enable 2-Factor Authentication on your Google account")
+                    logging.error("2. Generate an App Password at: https://myaccount.google.com/apppasswords")
+                    logging.error("3. Use the App Password instead of your regular password")
+                    return False
+                
                 if self.smtp_port == 587:
                     # Use STARTTLS
                     server = smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=30)
@@ -282,7 +314,7 @@ Powered by AI and Multi-Agent Systems
                     # Use SSL
                     server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, context=context, timeout=30)
                 else:
-                    logging.error(f"Unsupported port {self.smtp_port} for Gmail")
+                    logging.error(f"Unsupported port {self.smtp_port} for Gmail. Use 587 (STARTTLS) or 465 (SSL)")
                     return False
             else:
                 # For other providers, try STARTTLS
@@ -290,6 +322,7 @@ Powered by AI and Multi-Agent Systems
                 server.starttls(context=context)
             
             # Login and send
+            logging.info(f"Attempting to login to {self.smtp_host} with user: {self.email_user or 'Unknown'}")
             server.login(self.email_user, self.email_password)
             server.send_message(message)
             server.quit()
@@ -298,8 +331,19 @@ Powered by AI and Multi-Agent Systems
             logging.info(f"Email sent successfully to {to_email}")
             return True
             
-        except Exception as e:
+        except smtplib.SMTPAuthenticationError as e:
+            logging.error(f"SMTP Authentication failed: {str(e)}")
+            if self.smtp_host == "smtp.gmail.com":
+                logging.error("For Gmail, please ensure you're using an App Password:")
+                logging.error("1. Enable 2-Factor Authentication: https://myaccount.google.com/security")
+                logging.error("2. Generate App Password: https://myaccount.google.com/apppasswords")
+                logging.error("3. Use the 16-character App Password in EMAIL_PASSWORD")
+            return False
+        except smtplib.SMTPException as e:
             logging.error(f"SMTP error: {str(e)}")
+            return False
+        except Exception as e:
+            logging.error(f"Email sending error: {str(e)}")
             return False
     
     def _extract_news_items(self, content: str) -> list:
@@ -307,68 +351,78 @@ Powered by AI and Multi-Agent Systems
         news_items = []
         
         try:
-            # Simple parsing of content to extract news items
-            lines = content.split('\n')
-            current_item = {}
-            
-            for line in lines:
-                line = line.strip()
-                
-                # Look for numbered items (1., 2., etc.)
-                if line and line[0].isdigit() and '. ' in line:
-                    if current_item:
-                        news_items.append(current_item)
-                    
-                    # Start new item
-                    title = line.split('. ', 1)[1] if '. ' in line else line
-                    current_item = {
-                        "title": title,
-                        "summary": "",
-                        "source": "News Source",
-                        "url": ""
-                    }
-                
-                # Look for source information
-                elif line.lower().startswith("source:"):
-                    if current_item:
-                        current_item["source"] = line.split(":", 1)[1].strip()
-                
-                # Look for URLs
-                elif line.startswith("http"):
-                    if current_item:
-                        current_item["url"] = line.strip()
-                
-                # Add to summary if not empty and not a special line
-                elif line and not line.startswith("Source:") and not line.startswith("http"):
-                    if current_item and "summary" in current_item:
-                        current_item["summary"] += " " + line
-                    elif current_item:
-                        current_item["summary"] = line
-            
-            # Add the last item
-            if current_item:
-                news_items.append(current_item)
-            
-            # If no items found, create a simple one
-            if not news_items:
+            # If the content is a single newsletter article, create one item
+            if len(content) > 100 and not any(line.strip().startswith(str(i) + '.') for i in range(1, 10) for line in content.split('\n')):
+                # This looks like a single newsletter article, not a list of news items
                 news_items = [{
                     "title": "Daily News Summary",
-                    "summary": content[:200] + "..." if len(content) > 200 else content,
+                    "summary": content,  # Use the full content, don't truncate
                     "source": "Newsletter Agent",
                     "url": ""
                 }]
+            else:
+                # Try to parse numbered news items
+                lines = content.split('\n')
+                current_item = {}
+                
+                for line in lines:
+                    line = line.strip()
+                    
+                    # Look for numbered items (1., 2., etc.)
+                    if line and line[0].isdigit() and '. ' in line:
+                        if current_item:
+                            news_items.append(current_item)
+                        
+                        # Start new item
+                        title = line.split('. ', 1)[1] if '. ' in line else line
+                        current_item = {
+                            "title": title,
+                            "summary": "",
+                            "source": "News Source",
+                            "url": ""
+                        }
+                    
+                    # Look for source information
+                    elif line.lower().startswith("source:"):
+                        if current_item:
+                            current_item["source"] = line.split(":", 1)[1].strip()
+                    
+                    # Look for URLs
+                    elif line.startswith("http"):
+                        if current_item:
+                            current_item["url"] = line.strip()
+                    
+                    # Add to summary if not empty and not a special line
+                    elif line and not line.startswith("Source:") and not line.startswith("http"):
+                        if current_item and "summary" in current_item:
+                            current_item["summary"] += " " + line
+                        elif current_item:
+                            current_item["summary"] = line
+                
+                # Add the last item
+                if current_item:
+                    news_items.append(current_item)
+                
+                # If no items found, create a simple one
+                if not news_items:
+                    news_items = [{
+                        "title": "Daily News Summary",
+                        "summary": content,  # Use the full content, don't truncate
+                        "source": "Newsletter Agent",
+                        "url": ""
+                    }]
             
         except Exception as e:
             logging.error(f"Error extracting news items: {str(e)}")
-            # Fallback
+            # Fallback - use the full content
             news_items = [{
                 "title": "Daily News Summary",
-                "summary": content[:200] + "..." if len(content) > 200 else content,
+                "summary": content,  # Use the full content, don't truncate
                 "source": "Newsletter Agent",
                 "url": ""
             }]
         
-        return news_items[:10]  # Limit to 10 items
+        return news_items  # Remove the limit to 10 items
     
     async def send_test_email(self, to_email: str) -> bool:
         """Send a test email"""

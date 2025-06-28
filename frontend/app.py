@@ -54,7 +54,7 @@ def show_home_page():
         - **🔧 Model Context Protocol (MCP)**: Agents use powerful tools to fetch and analyze data
         - **📰 Personalized News Curation**: Tailored content based on your interests
         - **⏰ Automated Delivery**: Daily emails at 9 AM
-        - **📊 Multiple News Sources**: Yahoo Finance, NewsAPI, RSS feeds, and more
+        - **📊 Multiple News Sources**: Yahoo Finance, Google News, RSS feeds, and more
         - **💬 Interactive AI Chatbot**: Chat with AI agents to generate newsletters and ask questions
         
         ### How it Works
@@ -129,9 +129,9 @@ def show_register_page():
         news_sources = st.multiselect(
             "Select preferred news sources:",
             [
-                "yahoo_finance", "newsapi", "rss"
+                "yahoo_finance", "google_news", "rss"
             ],
-            default=["yahoo_finance", "newsapi", "rss"]
+            default=["yahoo_finance", "google_news", "rss"]
         )
         
         # Delivery time
@@ -212,84 +212,18 @@ def show_mcp_demo_page():
     
     with col1:
         st.markdown("### 📰 News Fetching Tool")
-        if st.button("Test News Fetching"):
-            with st.spinner("Fetching news..."):
-                try:
-                    response = requests.post(f"{API_BASE_URL}/mcp/test-tool", json={
-                        "tool_name": "fetch_news",
-                        "parameters": {"topics": ["technology"]}
-                    })
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        if result["result"]["success"]:
-                            data = result["result"]["data"]
-                            st.success(f"✅ Fetched {data['news_count']} articles")
-                            
-                            # Show sample articles
-                            for i, article in enumerate(data["articles"][:3]):
-                                st.markdown(f"**{i+1}. {article.get('title', 'No title')}**")
-                                st.markdown(f"*Source: {article.get('source', 'Unknown')}*")
-                        else:
-                            st.error(f"❌ {result['result']['error']}")
-                    else:
-                        st.error("❌ Tool test failed")
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
+        if st.button("Test News Fetching", key="test_news_fetch"):
+            test_news_fetching()
     
     with col2:
         st.markdown("### 📈 Stock Data Tool")
-        if st.button("Test Stock Data"):
-            with st.spinner("Fetching stock data..."):
-                try:
-                    response = requests.post(f"{API_BASE_URL}/mcp/test-tool", json={
-                        "tool_name": "fetch_stock_data",
-                        "parameters": {"symbols": ["AAPL", "GOOGL", "MSFT"]}
-                    })
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        if result["result"]["success"]:
-                            data = result["result"]["data"]
-                            st.success("✅ Stock data fetched successfully")
-                            
-                            # Show stock data
-                            for symbol, info in data["stocks"].items():
-                                if "error" not in info:
-                                    st.markdown(f"**{symbol}**: ${info.get('current_price', 'N/A')}")
-                        else:
-                            st.error(f"❌ {result['result']['error']}")
-                    else:
-                        st.error("❌ Tool test failed")
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
+        if st.button("Test Stock Data", key="test_stock_data"):
+            test_stock_data()
     
     # Full demo
     st.subheader("🎬 Complete MCP Demo")
-    if st.button("Run Full MCP Demo"):
-        with st.spinner("Running complete MCP demonstration..."):
-            try:
-                response = requests.get(f"{API_BASE_URL}/mcp/demo")
-                
-                if response.status_code == 200:
-                    demo_data = response.json()
-                    st.success("✅ MCP Demo completed successfully!")
-                    
-                    # Display demo results
-                    demos = demo_data.get("demos", {})
-                    
-                    for demo_name, demo_result in demos.items():
-                        with st.expander(f"📊 {demo_name.replace('_', ' ').title()}"):
-                            if demo_result.get("success"):
-                                st.success("✅ Tool executed successfully")
-                                data = demo_result.get("data", {})
-                                st.json(data)
-                            else:
-                                st.error(f"❌ {demo_result.get('error', 'Unknown error')}")
-                else:
-                    st.error("❌ Demo failed")
-            except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
+    if st.button("Run Full MCP Demo", key="run_mcp_demo"):
+        run_full_mcp_demo()
 
 def show_stats_page():
     """Display system statistics page"""
@@ -352,8 +286,11 @@ def show_ai_chatbot_page():
     with st.sidebar:
         st.subheader("⚙️ Configuration")
         
-        # User email
-        user_email = st.text_input("Your Email", placeholder="your.email@example.com")
+        # User email (optional)
+        user_email = st.text_input("Your Email (Optional)", placeholder="your.email@example.com", help="Add your email to send newsletters directly to your inbox")
+        
+        # Store email in session state
+        st.session_state.user_email = user_email
         
         # Topics selection
         topics = st.multiselect(
@@ -362,19 +299,29 @@ def show_ai_chatbot_page():
             default=["technology", "business"]
         )
         
+        # News source selection
+        news_source = st.selectbox(
+            "News Source:",
+            ["Auto", "Yahoo Finance", "Google News", "RSS Feeds"],
+            help="Choose your preferred news source. 'Auto' will select the best source based on your topics."
+        )
+        
+        # Store the selected news source in session state
+        st.session_state.selected_news_source = news_source
+        
         # Quick actions
         st.subheader("🚀 Quick Actions")
         
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("📰 Generate Newsletter", use_container_width=True):
-                if user_email and topics:
-                    generate_newsletter(user_email, topics)
+            if st.button("📰 Generate Newsletter", use_container_width=True, key="generate_newsletter"):
+                if topics:
+                    generate_newsletter(topics, user_email, news_source)
                 else:
-                    st.error("Please enter email and select topics")
+                    st.error("Please select at least one topic")
         
         with col2:
-            if st.button("🗑️ Clear Chat", use_container_width=True):
+            if st.button("🗑️ Clear Chat", use_container_width=True, key="clear_chat"):
                 st.session_state.chat_history = []
                 st.session_state.current_newsletter = None
                 st.rerun()
@@ -389,21 +336,31 @@ def show_ai_chatbot_page():
 I'm here to help you create personalized newsletters and answer your questions about current events.
 
 **What I can do:**
-- 📰 Generate personalized newsletters
+- 📰 Generate personalized newsletters (no email required!)
 - 💬 Answer questions about news and topics
-- 📧 Send newsletters to your email
+- 📧 Send newsletters to your email (optional)
 - 🔍 Provide insights on specific subjects
+- 🎯 Choose your preferred news source (LLM, Yahoo Finance, NewsAPI, RSS)
 
 **Quick Start:**
-1. Configure your email and topics in the sidebar
-2. Ask me to generate a newsletter
-3. View and send the newsletter to your email
+1. Select your topics of interest in the sidebar
+2. Choose your preferred news source (or leave as "Auto")
+3. Click "Generate Newsletter" or ask me to create one
+4. View the generated newsletter content
+5. Optionally add your email to send it to your inbox
+
+**News Sources:**
+- **Auto**: Smart selection based on your topics
+- **Yahoo Finance**: Real financial and stock news
+- **Google News**: Latest news from Google's news aggregation
+- **RSS Feeds**: Curated feeds from trusted sources
 
 **Try saying:**
 - "Generate a technology newsletter"
+- "Create a business summary"
 - "What's the latest in AI news?"
 - "Help me understand current events"
-- "Send me a business summary"
+- "Send me a business summary" (if you add your email)
 
 What would you like to explore today?"""
         
@@ -424,18 +381,12 @@ What would you like to explore today?"""
                 with st.chat_message("assistant"):
                     st.write(message["content"])
                     
-                    # If it's a newsletter response, show additional options
+                    # If it's a newsletter response, show the newsletter content directly
                     if message.get("type") == "newsletter":
                         newsletter_data = message.get("newsletter_data")
                         if newsletter_data:
-                            # Newsletter preview
-                            with st.expander("📰 View Newsletter"):
-                                show_newsletter_preview(newsletter_data)
-                            
-                            # Email sending option
-                            if user_email:
-                                if st.button("📧 Send to Email", key=f"send_{len(st.session_state.chat_history)}"):
-                                    send_newsletter_email(user_email, newsletter_data)
+                            # Show newsletter preview directly
+                            show_newsletter_preview(newsletter_data)
     
     # Chat input
     user_input = st.chat_input("Ask me anything about news, generate a newsletter, or request specific topics...")
@@ -453,32 +404,39 @@ What would you like to explore today?"""
         # Rerun to update the chat display
         st.rerun()
 
-def generate_newsletter(email, topics):
+def generate_newsletter(topics, user_email, news_source):
     """Generate a newsletter and add to chat history"""
-    with st.spinner("🤖 AI agents are generating your newsletter..."):
+    with st.spinner(f"🤖 AI agents are generating your newsletter from {news_source}..."):
         try:
-            response = requests.post(f"{API_BASE_URL}/test-newsletter", json={
-                "email": email,
-                "topics": topics
+            # Use the new endpoint that doesn't require email
+            response = requests.post(f"{API_BASE_URL}/generate-newsletter-content", json={
+                "topics": topics,
+                "email": user_email if user_email else None,
+                "news_source": news_source
             })
             
             if response.status_code == 200:
                 result = response.json()
                 newsletter_data = result.get("newsletter", {})
                 
-                # Create assistant response
+                # Get current timestamp
+                current_time = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+                
+                # Create assistant response with actual content and source info
                 assistant_message = f"""✅ **Newsletter Generated Successfully!**
 
 📊 **Summary:**
-- **News Count:** {newsletter_data.get('news_count', 0)} articles
-- **Topics:** {', '.join(newsletter_data.get('topics', []))}
-- **Generation Method:** {newsletter_data.get('generation_method', 'Unknown')}
+- **Topics:** {', '.join(topics)}
+- **News Source:** {news_source}
+- **News Count:** {result.get('news_count', 0)} articles
+- **Generated:** {current_time}
+- **Generation Method:** AI-powered multi-agent system
 
 📰 **Your personalized newsletter is ready!** 
 
-You can:
-- 📖 View the full newsletter content
-- 📧 Send it to your email
+The newsletter content is displayed below. You can:
+- 📖 Read the full newsletter content
+- 📧 Send it to your email (if you added your email in the sidebar)
 - 💬 Ask me to modify or regenerate it
 - 🔍 Ask questions about specific topics
 
@@ -513,10 +471,12 @@ def process_user_input(user_input, email, topics):
     
     # Check for newsletter generation requests
     if any(keyword in input_lower for keyword in ["generate", "create", "make", "newsletter", "summary", "send me"]):
-        if email and topics:
-            generate_newsletter(email, topics)
+        if topics:
+            # Get the current news source from session state or default to Auto
+            news_source = st.session_state.get("selected_news_source", "Auto")
+            generate_newsletter(topics, email, news_source)
         else:
-            response = "❌ **Please configure your email and topics in the sidebar first.**"
+            response = "❌ **Please select at least one topic in the sidebar first.**"
             st.session_state.chat_history.append({
                 "role": "assistant",
                 "content": response
@@ -527,7 +487,10 @@ def process_user_input(user_input, email, topics):
         if st.session_state.current_newsletter and email:
             send_newsletter_email(email, st.session_state.current_newsletter)
         else:
-            response = "❌ **No newsletter available to send. Please generate one first, or configure your email in the sidebar.**"
+            if not email:
+                response = "❌ **Please add your email in the sidebar to send newsletters.**"
+            else:
+                response = "❌ **No newsletter available to send. Please generate one first.**"
             st.session_state.chat_history.append({
                 "role": "assistant",
                 "content": response
@@ -537,153 +500,111 @@ def process_user_input(user_input, email, topics):
     elif any(keyword in input_lower for keyword in ["technology", "tech", "ai", "software", "programming", "startup"]):
         response = """🤖 **Technology News Available!**
 
-I can help you with:
-- 📰 Latest tech news and AI developments
-- 🚀 Startup and innovation updates
-- 💻 Software and programming trends
-- 📱 Mobile and consumer tech
-- 🤖 AI and machine learning breakthroughs
+I can help you with technology-related content:
 
-**Recent tech highlights:**
-- AI developments and ChatGPT updates
-- Major tech company announcements
-- Startup funding and acquisitions
-- New software releases and updates
-
-Would you like me to generate a technology-focused newsletter?"""
-        st.session_state.chat_history.append({
-            "role": "assistant",
-            "content": response
-        })
-    
-    elif any(keyword in input_lower for keyword in ["business", "finance", "market", "economy", "stocks", "investment"]):
-        response = """💼 **Business & Finance News Available!**
-
-I can help you with:
-- 📈 Market updates and stock news
-- 🏢 Corporate developments and earnings
-- 💰 Financial trends and analysis
-- 🌍 Global business news
-- 📊 Economic indicators and reports
-
-**Recent business highlights:**
-- Stock market movements and trends
-- Company earnings and financial reports
-- Mergers and acquisitions
-- Economic policy changes
-
-Would you like me to generate a business-focused newsletter?"""
-        st.session_state.chat_history.append({
-            "role": "assistant",
-            "content": response
-        })
-    
-    elif any(keyword in input_lower for keyword in ["science", "research", "discovery", "study"]):
-        response = """🔬 **Science News Available!**
-
-I can help you with:
-- 🧬 Latest scientific discoveries
-- 🔬 Research breakthroughs
-- 🌍 Environmental and climate science
-- 🚀 Space exploration updates
-- 🏥 Medical and health research
-
-**Recent science highlights:**
-- Breakthrough research findings
-- Space missions and discoveries
-- Medical advancements
-- Environmental studies
-
-Would you like me to generate a science-focused newsletter?"""
-        st.session_state.chat_history.append({
-            "role": "assistant",
-            "content": response
-        })
-    
-    # Check for help requests
-    elif any(keyword in input_lower for keyword in ["help", "what can you do", "how", "?", "assist"]):
-        response = """🤖 **I'm your AI Newsletter Assistant!**
-
-Here's what I can do for you:
-
-📰 **Newsletter Generation:**
-- Generate personalized newsletters
-- Focus on specific topics (tech, business, science, etc.)
-- Include latest news from multiple sources
-- Create both text and HTML versions
-
-💬 **Chat Features:**
-- Answer questions about current events
-- Provide news summaries and insights
-- Help you discover interesting topics
-- Intelligent topic-based responses
-
-📧 **Email Features:**
-- Send newsletters directly to your email
-- Customize delivery preferences
-- Beautiful HTML email formatting
-
-**Try asking me:**
-- "Generate a technology newsletter"
-- "What's the latest in AI news?"
-- "Create a business summary"
-- "Send the newsletter to my email"
-- "Tell me about recent tech developments"
+**Available Topics:**
+- 🤖 Artificial Intelligence & Machine Learning
+- 💻 Software Development & Programming
+- 🚀 Startups & Innovation
+- 📱 Mobile & Web Technologies
+- 🔒 Cybersecurity & Privacy
+- ☁️ Cloud Computing & DevOps
 
 **Quick Actions:**
-- Use the sidebar to configure your email and topics
-- Click "Generate Newsletter" for instant creation
-- Use "Clear Chat" to start fresh
+- Generate a technology newsletter
+- Ask about specific tech topics
+- Get the latest AI news
+- Learn about new programming trends
 
-What would you like to explore?"""
-        st.session_state.chat_history.append({
-            "role": "assistant",
-            "content": response
-        })
-    
-    # Check for status or current newsletter requests
-    elif any(keyword in input_lower for keyword in ["status", "current", "latest", "what do you have", "show me"]):
-        if st.session_state.current_newsletter:
-            newsletter_data = st.session_state.current_newsletter
-            response = f"""📰 **Current Newsletter Status:**
-
-**Subject:** {newsletter_data.get('subject', 'No subject')}
-**Topics:** {', '.join(newsletter_data.get('topics', []))}
-**Articles:** {newsletter_data.get('news_count', 0)} items
-**Generated:** {newsletter_data.get('generated_at', 'Unknown')}
-
-You can:
-- 📖 View the full newsletter content
-- 📧 Send it to your email
-- 🔄 Generate a new one with different topics
-- 💬 Ask me to modify it
-
-What would you like to do?"""
-        else:
-            response = "📭 **No newsletter generated yet.**\n\nI can help you create one! Just ask me to generate a newsletter or use the sidebar to configure your preferences."
+What specific technology topic interests you?"""
         
         st.session_state.chat_history.append({
             "role": "assistant",
             "content": response
         })
     
-    # Default response for other inputs
+    elif any(keyword in input_lower for keyword in ["business", "finance", "economy", "market", "stock", "investment"]):
+        response = """🤖 **Business & Finance News Available!**
+
+I can help you with business and financial content:
+
+**Available Topics:**
+- 💼 Business Strategy & Management
+- 📈 Stock Market & Investments
+- 🏦 Banking & Financial Services
+- 🌍 Global Economy & Trade
+- 🏢 Corporate News & Earnings
+- 💰 Cryptocurrency & Fintech
+
+**Quick Actions:**
+- Generate a business newsletter
+- Get market insights
+- Learn about investment opportunities
+- Track economic trends
+
+What business or finance topic would you like to explore?"""
+        
+        st.session_state.chat_history.append({
+            "role": "assistant",
+            "content": response
+        })
+    
+    # General help and information
+    elif any(keyword in input_lower for keyword in ["help", "what can you do", "how does this work", "guide"]):
+        response = """🤖 **How I Can Help You**
+
+I'm your AI newsletter assistant! Here's what I can do:
+
+**📰 Newsletter Generation:**
+- Create personalized newsletters on any topic
+- No email required - just select your topics
+- Real-time news gathering and AI-powered content creation
+
+**💬 News & Information:**
+- Answer questions about current events
+- Provide insights on specific topics
+- Share the latest news and trends
+
+**📧 Email Features:**
+- Send newsletters directly to your inbox (optional)
+- Save and share newsletter content
+- Customize delivery preferences
+
+**🔧 How to Use:**
+1. Select topics in the sidebar
+2. Click "Generate Newsletter" or ask me to create one
+3. View the content and optionally send to your email
+4. Ask follow-up questions or request modifications
+
+**Try saying:**
+- "Generate a technology newsletter"
+- "What's happening in AI today?"
+- "Create a business summary"
+- "Help me understand current events"
+
+What would you like to explore?"""
+        
+        st.session_state.chat_history.append({
+            "role": "assistant",
+            "content": response
+        })
+    
+    # Default response for unrecognized input
     else:
         response = f"""🤖 **I understand you're asking about: "{user_input}"**
 
 I can help you with:
-- 📰 Generating newsletters on this topic
-- 🔍 Finding related news and information
-- 💬 Discussing current events
-- 📧 Sending content to your email
+- 📰 Generating newsletters on your topics
+- 💬 Answering questions about news and current events
+- 📧 Sending content to your email (if you add it)
 
-**Quick suggestions:**
-- "Generate a newsletter about this topic"
-- "What's the latest news on this?"
-- "Send me a summary"
-- "Tell me more about this"
+**Quick Actions:**
+- Use the sidebar to configure your topics
+- Click "Generate Newsletter" for instant creation
+- Use "Clear Chat" to start fresh
 
-Would you like me to generate a newsletter covering this topic, or do you have a specific question?"""
+Would you like me to generate a newsletter on your selected topics, or do you have a specific question about current events?"""
+        
         st.session_state.chat_history.append({
             "role": "assistant",
             "content": response
@@ -691,18 +612,72 @@ Would you like me to generate a newsletter covering this topic, or do you have a
 
 def show_newsletter_preview(newsletter_data):
     """Display newsletter preview in chat"""
-    # Create tabs for different views
-    tab1, tab2, tab3 = st.tabs(["📝 Text", "🎨 HTML", "📊 Details"])
+    # Show the raw newsletter content
+    st.subheader("📰 Newsletter Content")
     
-    with tab1:
-        st.text_area(
-            "Newsletter Content",
-            value=newsletter_data.get("content", "No content"),
-            height=300,
-            disabled=True
-        )
+    # Display the main content
+    content = newsletter_data.get("content", "No content available")
+    st.text_area(
+        "Newsletter Content",
+        value=content,
+        height=400,
+        help="This is the raw newsletter content generated by our AI agents"
+    )
     
-    with tab2:
+    # Show newsletter details
+    with st.expander("📊 Newsletter Details"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"**Subject:** {newsletter_data.get('subject', 'No subject')}")
+            st.markdown(f"**Topics:** {', '.join(newsletter_data.get('topics', []))}")
+            st.markdown(f"**Generated:** {newsletter_data.get('generated_at', 'Unknown')}")
+            st.markdown(f"**Method:** {newsletter_data.get('generation_method', 'Unknown')}")
+        
+        with col2:
+            # Show news source information
+            news_count = newsletter_data.get('news_count', 0)
+            st.markdown(f"**News Articles:** {news_count}")
+            
+            # Show detailed news source info if available
+            if newsletter_data.get('news_source'):
+                st.markdown(f"**Primary Source:** {newsletter_data.get('news_source')}")
+            
+            # Show timestamp information
+            if newsletter_data.get('fetched_at'):
+                st.markdown(f"**Data Fetched:** {newsletter_data.get('fetched_at')}")
+            
+            # Show if this is from a specific source vs auto-selected
+            if newsletter_data.get('generation_method') == 'llm_ai':
+                st.info("🤖 Generated using AI with real news data")
+            elif newsletter_data.get('generation_method') == 'fallback_ai':
+                st.warning("⚠️ Used fallback content (real news sources may be unavailable)")
+    
+    # Email sending section
+    st.subheader("📧 Send Newsletter")
+    
+    # Check if user has provided email
+    user_email = st.session_state.get('user_email', '')
+    
+    if user_email:
+        st.info(f"📧 Ready to send to: {user_email}")
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            if st.button("📧 Send Newsletter", type="primary", use_container_width=True, key="send_newsletter"):
+                send_newsletter_email(user_email, newsletter_data)
+        
+        with col2:
+            st.markdown("The newsletter will be sent as a beautiful HTML email to your inbox.")
+    else:
+        st.warning("⚠️ To send this newsletter via email, please add your email address in the sidebar.")
+        st.markdown("**How to send via email:**")
+        st.markdown("1. Add your email address in the sidebar")
+        st.markdown("2. Click 'Send Newsletter' button above")
+        st.markdown("3. Check your inbox for the beautiful formatted newsletter")
+    
+    # HTML preview option (collapsed by default)
+    with st.expander("🎨 View HTML Version"):
         html_content = newsletter_data.get("html_content", "")
         if html_content:
             # Add styling for better preview
@@ -723,12 +698,6 @@ def show_newsletter_preview(newsletter_data):
             st.markdown(styled_html, unsafe_allow_html=True)
         else:
             st.warning("No HTML content available")
-    
-    with tab3:
-        st.markdown(f"**Subject:** {newsletter_data.get('subject', 'No subject')}")
-        st.markdown(f"**Topics:** {', '.join(newsletter_data.get('topics', []))}")
-        st.markdown(f"**Generated:** {newsletter_data.get('generated_at', 'Unknown')}")
-        st.markdown(f"**Method:** {newsletter_data.get('generation_method', 'Unknown')}")
 
 def send_newsletter_email(email, newsletter_data):
     """Send newsletter via email"""
@@ -759,6 +728,84 @@ def send_newsletter_email(email, newsletter_data):
                 "role": "assistant",
                 "content": error_message
             })
+
+def test_news_fetching():
+    """Test news fetching functionality"""
+    with st.spinner("Fetching news..."):
+        try:
+            response = requests.post(f"{API_BASE_URL}/mcp/test-tool", json={
+                "tool_name": "fetch_news",
+                "parameters": {"topics": ["technology"]}
+            })
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result["result"]["success"]:
+                    data = result["result"]["data"]
+                    st.success(f"✅ Fetched {data['news_count']} articles")
+                    
+                    # Show sample articles
+                    for i, article in enumerate(data["articles"][:3]):
+                        st.markdown(f"**{i+1}. {article.get('title', 'No title')}**")
+                        st.markdown(f"*Source: {article.get('source', 'Unknown')}*")
+                else:
+                    st.error(f"❌ {result['result']['error']}")
+            else:
+                st.error("❌ Tool test failed")
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
+
+def test_stock_data():
+    """Test stock data functionality"""
+    with st.spinner("Fetching stock data..."):
+        try:
+            response = requests.post(f"{API_BASE_URL}/mcp/test-tool", json={
+                "tool_name": "fetch_stock_data",
+                "parameters": {"symbols": ["AAPL", "GOOGL", "MSFT"]}
+            })
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result["result"]["success"]:
+                    data = result["result"]["data"]
+                    st.success("✅ Stock data fetched successfully")
+                    
+                    # Show stock data
+                    for symbol, info in data["stocks"].items():
+                        if "error" not in info:
+                            st.markdown(f"**{symbol}**: ${info.get('current_price', 'N/A')}")
+                else:
+                    st.error(f"❌ {result['result']['error']}")
+            else:
+                st.error("❌ Tool test failed")
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
+
+def run_full_mcp_demo():
+    """Run complete MCP demonstration"""
+    with st.spinner("Running complete MCP demonstration..."):
+        try:
+            response = requests.get(f"{API_BASE_URL}/mcp/demo")
+            
+            if response.status_code == 200:
+                demo_data = response.json()
+                st.success("✅ MCP Demo completed successfully!")
+                
+                # Display demo results
+                demos = demo_data.get("demos", {})
+                
+                for demo_name, demo_result in demos.items():
+                    with st.expander(f"📊 {demo_name.replace('_', ' ').title()}"):
+                        if demo_result.get("success"):
+                            st.success("✅ Tool executed successfully")
+                            data = demo_result.get("data", {})
+                            st.json(data)
+                        else:
+                            st.error(f"❌ {demo_result.get('error', 'Unknown error')}")
+            else:
+                st.error("❌ Demo failed")
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
 
 if __name__ == "__main__":
     main() 
