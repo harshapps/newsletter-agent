@@ -61,9 +61,11 @@ logs/
 *.tmp
 *.temp
 
-# MongoDB data
+# MongoDB data and binaries
 data/
 mongodb-data/
+mongodb-*-*.tgz
+mongodb-*-*/
 
 # Node modules (if any)
 node_modules/
