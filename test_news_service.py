@@ -109,7 +109,7 @@ async def main():
     
     if news_service_success and rss_success:
         print("\n🎉 All tests passed! News service handles missing NewsAPI key gracefully.")
-        print("\n💡 To get Google News functionality:")
+        print("\n💡 To get NewsAPI functionality:")
         print("   1. Get a free API key from https://newsapi.org/")
         print("   2. Add NEWS_API_KEY=your_key_here to your .env file")
     else:

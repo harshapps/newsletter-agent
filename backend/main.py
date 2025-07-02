@@ -19,6 +19,7 @@ from services.news_service import NewsService
 
 # Load environment variables
 load_dotenv()
+print(f"[DEBUG] NEWS_API_KEY at startup: {os.getenv('NEWS_API_KEY')}")
 
 app = FastAPI(
     title="Newsletter Agent MCP",

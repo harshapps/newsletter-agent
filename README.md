@@ -225,22 +225,21 @@ For support and questions:
 
 **Built with ❤️ using AI and Multi-Agent Systems**
 
-## Google News Functionality
+## NewsAPI Functionality
 
-The system now properly scrapes real news from Google News using the NewsAPI service, then uses an LLM to summarize the articles. This replaces the previous fake news generation.
+The system now properly fetches real news from NewsAPI service, then uses an LLM to summarize the articles. This replaces the previous fake news generation.
 
-### How it works:
-1. **Real Data Fetching**: Uses NewsAPI to get actual Google News articles
-2. **LLM Summarization**: Sends real article content to GPT-4 for intelligent summarization
-3. **Fallback Sources**: If Google News fails, falls back to RSS feeds
-4. **No Fake News**: Never generates fake content - only works with real news
+### Key Features:
+1. **Real Data Fetching**: Uses NewsAPI to get actual news articles
+2. **LLM Summarization**: AI-powered content summarization
+3. **Fallback Sources**: If NewsAPI fails, falls back to RSS feeds
 
-### Testing Google News
+### Testing NewsAPI
 
-Run the test script to verify Google News functionality:
+Run the test script to verify NewsAPI functionality:
 
 ```bash
-python test_google_news.py
+python test_newsapi.py
 ```
 
 This will test both the news fetching and LLM summarization capabilities.
@@ -265,7 +264,7 @@ newsletter-agent-mcp/
 ├── requirements.txt
 ├── start_backend.py
 ├── start_frontend.py
-└── test_google_news.py
+└── test_newsapi.py
 ```
 
 ## Contributing

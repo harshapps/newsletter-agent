@@ -4,12 +4,14 @@ import aiohttp
 import yfinance as yf
 from newsapi import NewsApiClient
 import feedparser
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Type
 import json
 import logging
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from langchain_openai import ChatOpenAI
+from langchain.tools import BaseTool
+from pydantic import BaseModel, Field
 
 # Simple MCP-like classes
 @dataclass
@@ -34,40 +36,67 @@ class ToolCall:
 # Import the news service
 from services.news_service import NewsService
 
-@dataclass
-class NewsTool(Tool):
-    """Tool for fetching news from various sources"""
+# Pydantic models for tool parameters
+class FetchNewsInput(BaseModel):
+    topics: List[str] = Field(description="List of topics to fetch news for")
+    sources: Optional[List[str]] = Field(default=None, description="Optional list of news sources to use")
+
+class FetchStockDataInput(BaseModel):
+    symbols: List[str] = Field(description="List of stock symbols to fetch data for")
+
+class AnalyzeTrendsInput(BaseModel):
+    news_data: List[Dict] = Field(description="List of news articles to analyze for trends")
+
+class SummarizeContentInput(BaseModel):
+    content: str = Field(description="Content to summarize")
+    max_length: int = Field(default=150, description="Maximum length of summary")
+
+class GenerateEmailTemplateInput(BaseModel):
+    user_topics: List[str] = Field(description="User's topics of interest")
+    news_data: List[Dict] = Field(description="News data to include in template")
+    user_name: Optional[str] = Field(default=None, description="User's name for personalization")
+
+class FetchWeatherInput(BaseModel):
+    location: str = Field(default="New York", description="Location to get weather for")
+
+# CrewAI-compatible tool classes
+class NewsTool(BaseTool):
     name: str = "fetch_news"
     description: str = "Fetch news articles from multiple sources based on topics"
+    args_schema: Optional[Type[BaseModel]] = FetchNewsInput
     
-    async def execute(self, topics: List[str], sources: Optional[List[str]] = None) -> ToolResult:
+    async def _arun(self, topics: List[str], sources: Optional[List[str]] = None) -> str:
         """Execute the news fetching tool"""
         try:
             news_service = NewsService()
-            news_data, sources_used = await news_service.get_news_for_topics(topics)
+            result = await news_service.get_news_for_topics(topics)
             
-            return ToolResult(
-                success=True,
-                data={
-                    "news_count": len(news_data),
-                    "articles": news_data[:10],  # Limit to 10 articles
-                    "topics": topics,
-                    "sources_used": sources or ["yahoo_finance", "newsapi", "rss"]
-                }
-            )
+            news_data = result.get("news", [])
+            sources_used = result.get("sources_used", [])
+            
+            # Format the result for the agent
+            response = f"Found {len(news_data)} news articles from {', '.join(sources_used)} sources.\n\n"
+            
+            for i, article in enumerate(news_data[:5], 1):  # Show first 5 articles
+                response += f"{i}. {article.get('title', 'No title')}\n"
+                response += f"   Summary: {article.get('summary', 'No summary')[:100]}...\n"
+                response += f"   Source: {article.get('source', 'Unknown')}\n\n"
+            
+            return response
+            
         except Exception as e:
-            return ToolResult(
-                success=False,
-                error=f"Failed to fetch news: {str(e)}"
-            )
+            return f"Failed to fetch news: {str(e)}"
+    
+    def _run(self, topics: List[str], sources: Optional[List[str]] = None) -> str:
+        """Synchronous version for compatibility"""
+        return asyncio.run(self._arun(topics, sources))
 
-@dataclass
-class StockDataTool(Tool):
-    """Tool for fetching stock market data"""
+class StockDataTool(BaseTool):
     name: str = "fetch_stock_data"
     description: str = "Get real-time stock data and financial information"
+    args_schema: Optional[Type[BaseModel]] = FetchStockDataInput
     
-    async def execute(self, symbols: List[str]) -> ToolResult:
+    async def _arun(self, symbols: List[str]) -> str:
         """Execute the stock data fetching tool"""
         try:
             stock_data = {}
@@ -88,26 +117,33 @@ class StockDataTool(Tool):
                 except Exception as e:
                     stock_data[symbol] = {"error": str(e)}
             
-            return ToolResult(
-                success=True,
-                data={
-                    "stocks": stock_data,
-                    "timestamp": datetime.now().isoformat()
-                }
-            )
+            # Format the result for the agent
+            response = f"Stock data for {len(symbols)} symbols:\n\n"
+            
+            for symbol, data in stock_data.items():
+                if "error" not in data:
+                    response += f"{symbol} ({data['company_name']}):\n"
+                    response += f"  Price: ${data['current_price']}\n"
+                    response += f"  Change: {data['change_percent']}%\n"
+                    response += f"  Volume: {data['volume']}\n\n"
+                else:
+                    response += f"{symbol}: Error - {data['error']}\n\n"
+            
+            return response
+            
         except Exception as e:
-            return ToolResult(
-                success=False,
-                error=f"Failed to fetch stock data: {str(e)}"
-            )
+            return f"Failed to fetch stock data: {str(e)}"
+    
+    def _run(self, symbols: List[str]) -> str:
+        """Synchronous version for compatibility"""
+        return asyncio.run(self._arun(symbols))
 
-@dataclass
-class TrendAnalysisTool(Tool):
-    """Tool for analyzing trending topics"""
+class TrendAnalysisTool(BaseTool):
     name: str = "analyze_trends"
     description: str = "Analyze current trending topics and their relevance"
+    args_schema: Optional[Type[BaseModel]] = AnalyzeTrendsInput
     
-    async def execute(self, news_data: List[Dict]) -> ToolResult:
+    async def _arun(self, news_data: List[Dict]) -> str:
         """Execute the trend analysis tool"""
         try:
             # Analyze trends from news data
@@ -132,29 +168,32 @@ class TrendAnalysisTool(Tool):
             top_topics = sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)[:5]
             top_keywords = sorted(keyword_counts.items(), key=lambda x: x[1], reverse=True)[:5]
             
-            return ToolResult(
-                success=True,
-                data={
-                    "trending_topics": [topic for topic, count in top_topics],
-                    "trending_keywords": [keyword for keyword, count in top_keywords],
-                    "topic_counts": topic_counts,
-                    "keyword_counts": keyword_counts,
-                    "analysis_timestamp": datetime.now().isoformat()
-                }
-            )
+            # Format the result for the agent
+            response = f"Trend analysis of {len(news_data)} articles:\n\n"
+            
+            response += "Top trending topics:\n"
+            for topic, count in top_topics:
+                response += f"  {topic}: {count} articles\n"
+            
+            response += "\nTop trending keywords:\n"
+            for keyword, count in top_keywords:
+                response += f"  {keyword}: {count} mentions\n"
+            
+            return response
+            
         except Exception as e:
-            return ToolResult(
-                success=False,
-                error=f"Failed to analyze trends: {str(e)}"
-            )
+            return f"Failed to analyze trends: {str(e)}"
+    
+    def _run(self, news_data: List[Dict]) -> str:
+        """Synchronous version for compatibility"""
+        return asyncio.run(self._arun(news_data))
 
-@dataclass
-class ContentSummarizerTool(Tool):
-    """Tool for summarizing content using AI"""
+class ContentSummarizerTool(BaseTool):
     name: str = "summarize_content"
     description: str = "Summarize news articles and content using AI"
+    args_schema: Optional[Type[BaseModel]] = SummarizeContentInput
     
-    async def execute(self, content: str, max_length: int = 150) -> ToolResult:
+    async def _arun(self, content: str, max_length: int = 150) -> str:
         """Execute the content summarization tool"""
         try:
             # Simple summarization (in a real implementation, you'd use an AI model)
@@ -164,28 +203,25 @@ class ContentSummarizerTool(Tool):
             else:
                 summary = " ".join(words[:max_length]) + "..."
             
-            return ToolResult(
-                success=True,
-                data={
-                    "original_length": len(content),
-                    "summary_length": len(summary),
-                    "summary": summary,
-                    "compression_ratio": len(summary) / len(content) if len(content) > 0 else 1.0
-                }
-            )
+            # Format the result for the agent
+            response = f"Content summary ({len(summary)} characters):\n\n"
+            response += summary
+            
+            return response
+            
         except Exception as e:
-            return ToolResult(
-                success=False,
-                error=f"Failed to summarize content: {str(e)}"
-            )
+            return f"Failed to summarize content: {str(e)}"
+    
+    def _run(self, content: str, max_length: int = 150) -> str:
+        """Synchronous version for compatibility"""
+        return asyncio.run(self._arun(content, max_length))
 
-@dataclass
-class EmailTemplateTool(Tool):
-    """Tool for generating email templates"""
+class EmailTemplateTool(BaseTool):
     name: str = "generate_email_template"
     description: str = "Generate personalized email templates for newsletters"
+    args_schema: Optional[Type[BaseModel]] = GenerateEmailTemplateInput
     
-    async def execute(self, user_topics: List[str], news_data: List[Dict], user_name: Optional[str] = None) -> ToolResult:
+    async def _arun(self, user_topics: List[str], news_data: List[Dict], user_name: Optional[str] = None) -> str:
         """Execute the email template generation tool"""
         try:
             # Generate personalized email template
@@ -198,7 +234,7 @@ class EmailTemplateTool(Tool):
             for i, article in enumerate(news_data[:8], 1):  # Limit to 8 articles
                 news_items_html += f"""
                 <div class="news-item">
-                    <div class="news-title">{i}. {article.get('title', 'No title')}</div>
+                    <h3>{article.get('title', 'No title')}</h3>
                     <div class="news-summary">{article.get('summary', 'No summary')[:200]}...</div>
                     <div class="news-source">Source: {article.get('source', 'Unknown')}</div>
                 </div>
@@ -218,28 +254,29 @@ class EmailTemplateTool(Tool):
             </div>
             """
             
-            return ToolResult(
-                success=True,
-                data={
-                    "template": template,
-                    "user_topics": user_topics,
-                    "news_count": len(news_data),
-                    "generated_at": datetime.now().isoformat()
-                }
-            )
+            # Format the result for the agent
+            response = f"Email template generated for {user_name or 'user'}:\n\n"
+            response += f"Topics: {topics_text}\n"
+            response += f"News items: {len(news_data)}\n"
+            response += f"Template length: {len(template)} characters\n\n"
+            response += "Template preview:\n"
+            response += template[:500] + "..." if len(template) > 500 else template
+            
+            return response
+            
         except Exception as e:
-            return ToolResult(
-                success=False,
-                error=f"Failed to generate email template: {str(e)}"
-            )
+            return f"Failed to generate email template: {str(e)}"
+    
+    def _run(self, user_topics: List[str], news_data: List[Dict], user_name: Optional[str] = None) -> str:
+        """Synchronous version for compatibility"""
+        return asyncio.run(self._arun(user_topics, news_data, user_name))
 
-@dataclass
-class WeatherTool(Tool):
-    """Tool for fetching weather information (for newsletter personalization)"""
+class WeatherTool(BaseTool):
     name: str = "fetch_weather"
     description: str = "Get weather information for location-based newsletter personalization"
+    args_schema: Optional[Type[BaseModel]] = FetchWeatherInput
     
-    async def execute(self, location: str = "New York") -> ToolResult:
+    async def _arun(self, location: str = "New York") -> str:
         """Execute the weather fetching tool"""
         try:
             # Mock weather data (in real implementation, use a weather API)
@@ -252,19 +289,25 @@ class WeatherTool(Tool):
                 "timestamp": datetime.now().isoformat()
             }
             
-            return ToolResult(
-                success=True,
-                data=weather_data
-            )
+            # Format the result for the agent
+            response = f"Weather for {location}:\n"
+            response += f"Temperature: {weather_data['temperature']}\n"
+            response += f"Condition: {weather_data['condition']}\n"
+            response += f"Humidity: {weather_data['humidity']}\n"
+            response += f"Forecast: {weather_data['forecast']}\n"
+            
+            return response
+            
         except Exception as e:
-            return ToolResult(
-                success=False,
-                error=f"Failed to fetch weather: {str(e)}"
-            )
+            return f"Failed to fetch weather: {str(e)}"
+    
+    def _run(self, location: str = "New York") -> str:
+        """Synchronous version for compatibility"""
+        return asyncio.run(self._arun(location))
 
 # MCP Tool Registry
 class MCPToolRegistry:
-    """Registry for all MCP tools"""
+    """Registry for managing MCP tools"""
     
     def __init__(self):
         self.tools = {
@@ -276,23 +319,47 @@ class MCPToolRegistry:
             "fetch_weather": WeatherTool()
         }
     
-    def get_tool(self, tool_name: str) -> Optional[Tool]:
-        """Get a tool by name"""
+    def get_tool(self, tool_name: str) -> Optional[BaseTool]:
+        """Get a specific tool by name"""
         return self.tools.get(tool_name)
     
-    def get_all_tools(self) -> Dict[str, Tool]:
+    def get_all_tools(self) -> Dict[str, BaseTool]:
         """Get all available tools"""
         return self.tools
     
     def list_tools(self) -> List[Dict[str, str]]:
-        """List all available tools with descriptions"""
+        """List all available tools with their descriptions"""
         return [
             {
-                "name": name,
+                "name": tool.name,
                 "description": tool.description
             }
-            for name, tool in self.tools.items()
+            for tool in self.tools.values()
         ]
+    
+    async def execute_tool(self, tool_name: str, **kwargs) -> Dict[str, Any]:
+        """Execute a tool by name with given parameters"""
+        tool = self.get_tool(tool_name)
+        if tool:
+            try:
+                result = await tool._arun(**kwargs)
+                return {
+                    "success": True,
+                    "data": result,
+                    "error": None
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": str(e)
+                }
+        else:
+            return {
+                "success": False,
+                "data": None,
+                "error": f"Tool {tool_name} not found"
+            }
 
 # Global tool registry instance
 tool_registry = MCPToolRegistry() 
@@ -304,44 +371,10 @@ llm = ChatOpenAI(
 )
 
 def llm_topic_news_fetcher(topic: str):
-    """Fetch real news for any topic using the news service and summarize with LLM."""
-    try:
-        # Import the news service
-        from backend.services.news_service import NewsService
-        import asyncio
-        
-        # Create news service instance
+    """Legacy function for fetching news by topic"""
+    async def fetch_news():
         news_service = NewsService()
-        
-        # Get real news for the topic
-        news_data, sources_used = asyncio.run(news_service.get_news_for_topics([topic]))
-        
-        # If we got real news, return it
-        if news_data and len(news_data) > 0:
-            return [
-                {
-                    "title": article.get("title", ""),
-                    "summary": article.get("summary", ""),
-                    "source": article.get("source", "Unknown")
-                }
-                for article in news_data[:3]  # Return top 3 articles
-            ]
-        
-        # If no real news found, provide a helpful message
-        return [
-            {
-                "title": f"Unable to fetch news for {topic}",
-                "summary": f"We couldn't find recent news articles for '{topic}'. This could be due to network issues, service maintenance, or the topic being too specific. Please try again later or check your NewsAPI key setup.",
-                "source": "News Service"
-            }
-        ]
-        
-    except Exception as e:
-        logging.error(f"Error fetching news for topic '{topic}': {str(e)}")
-        return [
-            {
-                "title": f"Error fetching news for {topic}",
-                "summary": f"Unable to fetch news for '{topic}' due to a technical issue. Please check your API keys and network connection, then try again later.",
-                "source": "News Service"
-            }
-        ] 
+        result = await news_service.get_news_for_topics([topic])
+        return result.get("news", [])
+    
+    return asyncio.run(fetch_news()) 

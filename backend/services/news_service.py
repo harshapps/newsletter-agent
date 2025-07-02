@@ -17,20 +17,27 @@ class NewsService:
     def __init__(self):
         # Initialize optional NewsAPI client (if key is available)
         news_api_key = os.getenv('NEWS_API_KEY')
+        print(f"[DEBUG] NewsService init - NEWS_API_KEY: {news_api_key[:10] if news_api_key else 'None'}...")
+        
         if news_api_key and news_api_key != 'your-api-key-here':
             try:
                 from newsapi import NewsApiClient
                 self.newsapi = NewsApiClient(api_key=news_api_key)
                 self.newsapi_available = True
+                print("✅ NewsAPI client initialized successfully")
                 logging.info("✅ NewsAPI client initialized successfully")
             except ImportError:
                 self.newsapi = None
                 self.newsapi_available = False
+                print("⚠️ NewsAPI package not installed")
                 logging.warning("⚠️ NewsAPI package not installed")
         else:
             self.newsapi = None
             self.newsapi_available = False
+            print("ℹ️ NewsAPI key not provided, using alternative news sources")
             logging.info("ℹ️ NewsAPI key not provided, using alternative news sources")
+        
+        print(f"[DEBUG] NewsService init - newsapi_available: {self.newsapi_available}")
         
         # Define news sources and their configurations
         self.news_sources = {
@@ -110,11 +117,11 @@ class NewsService:
                 "sources_used": sources_used,
                 "news": self._deduplicate_news(all_news)[:20]
             }
-        elif preferred_source == "Google News":
-            # Only use Google News
-            google_news = await self._get_google_news(topics, twenty_four_hours_ago)
-            all_news.extend(google_news)
-            sources_used.append("Google News")
+        elif preferred_source == "NewsAPI":
+            # Only use NewsAPI
+            newsapi_news = await self._get_newsapi_news(topics, twenty_four_hours_ago)
+            all_news.extend(newsapi_news)
+            sources_used.append("NewsAPI")
             return {
                 "date_fetched": date_fetched,
                 "sources_used": sources_used,
@@ -141,6 +148,9 @@ class NewsService:
 
         # Step 1: Try real news sources first (if enabled and available)
         if use_real_sources:
+            print(f"[DEBUG] use_real_sources: {use_real_sources}")
+            print(f"[DEBUG] newsapi_available: {self.newsapi_available}")
+            
             # Try Yahoo Finance for finance-related topics
             if any(t in finance_topics for t in topics):
                 yahoo_news = await self._get_yahoo_finance_news(topics, twenty_four_hours_ago)
@@ -168,11 +178,18 @@ class NewsService:
                 sources_used.append("RSS Feeds")
             
             # Try NewsAPI if available (optional)
+            print(f"[DEBUG] About to try NewsAPI - newsapi_available: {self.newsapi_available}")
             if self.newsapi_available:
-                google_news = await self._get_google_news(topics, twenty_four_hours_ago)
-                if google_news:
-                    all_news.extend(google_news)
-                    sources_used.append("Google News (via NewsAPI)")
+                print("[DEBUG] Calling _get_newsapi_news (NewsAPI)")
+                newsapi_news = await self._get_newsapi_news(topics, twenty_four_hours_ago)
+                if newsapi_news:
+                    all_news.extend(newsapi_news)
+                    sources_used.append("NewsAPI")
+                    print(f"[DEBUG] Added {len(newsapi_news)} NewsAPI articles")
+                else:
+                    print("[DEBUG] No NewsAPI articles found")
+            else:
+                print("[DEBUG] NewsAPI not available, skipping")
 
         # Step 2: If no real news found, provide helpful message instead of fake news
         if len(all_news) == 0:
@@ -193,7 +210,7 @@ class NewsService:
             if not self.newsapi_available:
                 all_news.append({
                     "title": "Setup NewsAPI for Better News Coverage",
-                    "summary": "To get real-time news from Google News, please add your NewsAPI key to the .env file. Get a free key from https://newsapi.org/",
+                    "summary": "To get real-time news from NewsAPI, please add your NewsAPI key to the .env file. Get a free key from https://newsapi.org/",
                     "url": "https://newsapi.org/",
                     "source": "Setup Guide",
                     "published_at": current_timestamp,
@@ -297,13 +314,13 @@ class NewsService:
         
         return news_items
     
-    async def _get_google_news(self, topics: List[str], start_time: datetime) -> List[Dict[str, Any]]:
-        """Get real news from Google News using NewsAPI and summarize with LLM"""
+    async def _get_newsapi_news(self, topics: List[str], start_time: datetime) -> List[Dict[str, Any]]:
+        """Get real news from NewsAPI and summarize with LLM"""
         news_items = []
         
         # Check if NewsAPI is available
         if not self.newsapi_available or not self.newsapi:
-            logging.warning("❌ NewsAPI not available, skipping Google News")
+            logging.warning("❌ NewsAPI not available, skipping NewsAPI")
             return news_items
         
         try:
@@ -316,12 +333,15 @@ class NewsService:
                 else:
                     search_queries.append(topic)
             
-            logging.info(f"🔍 Fetching Google News for topics: {topics}")
+            logging.info(f"🔍 Fetching NewsAPI for topics: {topics}")
+            print(f"[DEBUG] NewsAPI search queries: {search_queries}")
             
             # Fetch news for each topic
             for query in search_queries[:3]:  # Limit to 3 topics to avoid rate limits
                 try:
-                    # Get top headlines from Google News
+                    print(f"[DEBUG] NewsAPI query: '{query}' from {start_time.strftime('%Y-%m-%d')} to {datetime.now().strftime('%Y-%m-%d')}")
+                    
+                    # Get top headlines from NewsAPI
                     articles = self.newsapi.get_everything(
                         q=query,
                         language='en',
@@ -329,6 +349,10 @@ class NewsService:
                         from_param=start_time.strftime('%Y-%m-%d'),
                         to=datetime.now().strftime('%Y-%m-%d')
                     )
+                    
+                    print(f"[DEBUG] NewsAPI response status: {articles.get('status')}")
+                    print(f"[DEBUG] NewsAPI total results: {articles.get('totalResults', 0)}")
+                    print(f"[DEBUG] NewsAPI articles found: {len(articles.get('articles', []))}")
                     
                     if articles.get('status') == 'ok' and articles.get('articles'):
                         logging.info(f"✅ Found {len(articles['articles'])} articles for '{query}'")
@@ -343,30 +367,44 @@ class NewsService:
                                     article.get('content', '')
                                 )
                                 
+                                # Parse publishedAt and make it offset-naive for comparison
+                                published_at_str = article.get('publishedAt', datetime.now().isoformat())
+                                published_at = datetime.fromisoformat(published_at_str.replace('Z', '+00:00'))
+                                if published_at.tzinfo is not None:
+                                    published_at = published_at.replace(tzinfo=None)
+                                # Only include articles published after start_time
+                                if published_at < start_time:
+                                    print(f"[DEBUG] Skipping article '{article.get('title', '')[:50]}...' - too old")
+                                    continue
                                 news_items.append({
                                     "title": article.get('title', ''),
                                     "summary": summary,
                                     "url": article.get('url', ''),
-                                    "source": article.get('source', {}).get('name', 'Google News'),
-                                    "published_at": datetime.fromisoformat(article.get('publishedAt', datetime.now().isoformat()).replace('Z', '+00:00')),
+                                    "source": article.get('source', {}).get('name', 'NewsAPI'),
+                                    "published_at": published_at,
                                     "relevance_score": self._calculate_relevance_score(article.get('title', ''), topics),
                                     "fetched_at": datetime.now().isoformat(),
-                                    "news_source": "Google News (via NewsAPI)"
+                                    "news_source": "NewsAPI"
                                 })
+                                print(f"[DEBUG] Added NewsAPI article: '{article.get('title', '')[:50]}...'")
                     
                     # Add delay to avoid rate limiting
                     await asyncio.sleep(1)
                     
                 except Exception as e:
                     logging.warning(f"❌ Error fetching news for '{query}': {str(e)}")
+                    print(f"[DEBUG] NewsAPI error for '{query}': {str(e)}")
                     continue
                     
         except Exception as e:
-            logging.error(f"❌ Error in Google News fetching: {str(e)}")
+            logging.error(f"❌ Error in NewsAPI fetching: {str(e)}")
+            print(f"[DEBUG] NewsAPI general error: {str(e)}")
+        
+        print(f"[DEBUG] NewsAPI total articles found: {len(news_items)}")
         
         # If no real news found, try alternative approach with RSS feeds
         if not news_items:
-            logging.info("⚠️ No Google News found via NewsAPI, trying RSS feeds as alternative")
+            logging.info("⚠️ No NewsAPI articles found, trying RSS feeds as alternative")
             rss_news = await self._get_rss_news(topics, start_time)
             if rss_news:
                 news_items.extend(rss_news)
@@ -376,7 +414,7 @@ class NewsService:
     async def _summarize_article_with_llm(self, title: str, description: str, content: str) -> str:
         """Summarize article content using LLM"""
         try:
-            from backend.mcp.tools import llm
+            from mcp.tools import llm
             
             # Combine available content
             full_content = f"Title: {title}\n"
